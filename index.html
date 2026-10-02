@@ -208,16 +208,19 @@ svg{display:block;fill:currentColor;}
   flex-shrink:0;cursor:pointer;border:2px solid rgba(0,0,0,.4);
 }
 
-/* ---------- OFFLINE BAR ---------- */
-.offline-bar{
+/* ---------- STATUS BAR ---------- */
+.status-bar{
   display:flex;align-items:center;gap:10px;
   margin:0 24px 4px;
   padding:8px 14px;border-radius:8px;
-  background:#1d3a25;color:#b6f0c8;font-size:12.5px;
-  border:1px solid rgba(29,185,84,.35);
+  font-size:12.5px;
+  border:1px solid transparent;
 }
-.offline-bar svg{width:15px;height:15px;flex-shrink:0;}
-.offline-bar .spacer{flex:1;}
+.status-bar.ok{background:#1d3a25;color:#b6f0c8;border-color:rgba(29,185,84,.35);}
+.status-bar.warn{background:#3a2e1d;color:#f0dcb6;border-color:rgba(185,146,29,.35);}
+.status-bar.info{background:#1d2a3a;color:#b6d6f0;border-color:rgba(29,115,185,.35);}
+.status-bar svg{width:15px;height:15px;flex-shrink:0;}
+.status-bar .spacer{flex:1;}
 
 /* ---------- HERO ---------- */
 .hero{
@@ -395,12 +398,11 @@ svg{display:block;fill:currentColor;}
 .song:hover .s-like,.song:hover .s-more{opacity:1;}
 .s-like:hover,.s-more:hover{color:#fff;transform:scale(1.1);background:rgba(255,255,255,.08);}
 .s-like.on{opacity:1;color:var(--green);}
-.s-more.always{opacity:.55;}
 
 /* ---------- EMPTY ---------- */
 .empty{
   text-align:center;padding:60px 20px;color:var(--muted);
-  max-width:640px;margin:0 auto;
+  max-width:680px;margin:0 auto;
 }
 .empty h3{color:#fff;font-size:22px;margin:0 0 10px;}
 .empty p{margin:0 0 10px;font-size:14px;line-height:1.7;}
@@ -414,7 +416,10 @@ svg{display:block;fill:currentColor;}
   background:#181818;border:1px solid #262626;
   padding:16px 20px;border-radius:10px;margin-top:10px;
   font-size:13px;line-height:1.9;
+  max-width:100%;
 }
+.empty .hint b{color:#fff;}
+.empty .hint code{display:block;margin:8px 0;padding:10px 12px;background:#111;color:#9fe8b6;}
 
 /* ============================================================
    PLAYER BAR
@@ -529,7 +534,7 @@ svg{display:block;fill:currentColor;}
 .popup{
   position:fixed;z-index:400;
   background:#282828;border-radius:6px;
-  padding:4px;min-width:220px;max-width:280px;
+  padding:4px;min-width:220px;max-width:300px;
   box-shadow:0 12px 48px rgba(0,0,0,.75);
   animation:popIn .12s ease-out;
 }
@@ -549,7 +554,6 @@ svg{display:block;fill:currentColor;}
   padding:8px 12px 4px;font-size:11px;
   text-transform:uppercase;letter-spacing:.8px;color:#8a8a8a;
 }
-.popup .label.norm{text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--muted);}
 .popup .none{
   padding:6px 12px 10px;font-size:12.5px;color:var(--muted);
 }
@@ -635,7 +639,7 @@ svg{display:block;fill:currentColor;}
   .center{flex-direction:row;gap:14px;}
   .progress{display:none;}
   .np-art{width:46px;height:46px;}
-  .offline-bar{margin:0 16px 4px;}
+  .status-bar{margin:0 16px 4px;}
 }
 </style>
 </head>
@@ -701,7 +705,7 @@ svg{display:block;fill:currentColor;}
       <div class="user-chip" title="Signed in">S</div>
     </header>
 
-    <div id="offlineBar"></div>
+    <div id="statusBar"></div>
     <div id="content"></div>
   </main>
 
@@ -771,7 +775,45 @@ svg{display:block;fill:currentColor;}
 "use strict";
 
 /* ============================================================
-   1. ICONS
+   ⚠️  IMPORTANT — READ THIS FIRST
+   ============================================================
+   GitHub Pages does NOT provide directory listings.
+   The ONLY way this app can find your songs is via a manifest
+   file at:
+
+       db/song/songs.json
+
+   Make sure you've created that file with your filenames, e.g.:
+
+       [
+         "Guillermo del Toro - Pacific Rim Theme.mp3",
+         "Pharrell Williams - Happy.mp3",
+         "Three Days Grace - Gone Forever.mp3",
+         "Three Days Grace - Time Of Dying.mp3"
+       ]
+
+   The filenames must match EXACTLY (case, spaces, extension).
+   ============================================================ */
+
+/* ============================================================
+   1. CONFIG
+   ============================================================ */
+const CONFIG = {
+  songDir: "db/song/",          // relative → works on GH Pages subpaths
+  manifest: "songs.json",       // file inside songDir
+  mediaCache: "spoton-media-v3",
+  lsLikes: "spoton.likes",
+  lsPlaylists: "spoton.playlists",
+  lsPlays: "spoton.plays",
+  lsOffline: "spoton.offline.savedAt",
+  recencyWindow: 1000 * 60 * 60 * 24 * 14
+};
+
+const SONG_DIR = CONFIG.songDir;
+const MANIFEST_URL = SONG_DIR + CONFIG.manifest;
+
+/* ============================================================
+   2. ICONS
    ============================================================ */
 const ICON = {
   play:  '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
@@ -785,24 +827,15 @@ const ICON = {
   more:  '<svg viewBox="0 0 24 24"><path d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>',
   check: '<svg viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
   info:  '<svg viewBox="0 0 24 24"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>',
-  cloud: '<svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>'
+  warn:  '<svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>',
+  cloud: '<svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>',
+  spin:  '<svg class="spin" viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg>'
 };
 
 const REPEAT_ONE_PATH = "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z";
 
 /* ============================================================
-   2. CONSTANTS
-   ============================================================ */
-const SONG_DIR      = "db/song/";          // relative → works on GitHub Pages
-const MANIFEST_URL  = SONG_DIR + "songs.json";
-const MEDIA_CACHE   = "spoton-media-v1";
-const LS_PLAYLISTS  = "spoton.playlists";
-const LS_LIKES      = "spoton.likes";
-const LS_PLAYS      = "spoton.plays";
-const LS_OFFLINE    = "spoton.offline.savedAt";
-
-/* ============================================================
-   3. STATE  —  starts with ZERO playlists
+   3. STATE
    ============================================================ */
 const state = {
   songs: [],
@@ -814,18 +847,21 @@ const state = {
   shuffle: false,
   repeat: "off",
   liked: new Set(),
-  plays: {},              // file -> play count
-  lastPlayed: {},         // file -> timestamp
-  playlists: [],          // ← USER-CREATED ONLY. Starts empty.
+  plays: {},
+  lastPlayed: {},
+  playlists: [],
   volume: 0.8,
   lastVolume: 0.8,
   muted: false,
   view: "home",
   currentPlaylistId: null,
+  currentMixId: null,
   history: [],
   historyIndex: -1,
   offlineSaved: false,
-  savingOffline: false
+  savingOffline: false,
+  manifestFound: false,
+  loadError: null
 };
 
 const audio = new Audio();
@@ -880,6 +916,14 @@ function prettifyName(filename) {
     .replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/** Try to pull "Artist - Title" from a filename */
+function parseArtistTitle(filename, fallbackTitle) {
+  const base = prettifyName(filename);
+  const m = base.match(/^(.+?)\s+-\s+(.+)$/);
+  if (m) return { artist: m[1].trim(), title: m[2].trim() };
+  return { artist: "Unknown Artist", title: fallbackTitle || base };
+}
+
 function shuffleArray(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -901,7 +945,7 @@ function toast(msg, ms = 2600) {
 }
 
 /* ============================================================
-   5. STORAGE HELPERS
+   5. STORAGE
    ============================================================ */
 function lsGet(key, fallback) {
   try {
@@ -913,64 +957,75 @@ function lsSet(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
 }
 
-function saveLikes()      { lsSet(LS_LIKES, [...state.liked]); }
-function savePlays()      { lsSet(LS_PLAYS, { plays: state.plays, lastPlayed: state.lastPlayed }); }
-function savePlaylists()  { lsSet(LS_PLAYLISTS, state.playlists); }
+function saveLikes()     { lsSet(CONFIG.lsLikes, [...state.liked]); }
+function savePlays()     { lsSet(CONFIG.lsPlays, { plays: state.plays, lastPlayed: state.lastPlayed }); }
+function savePlaylists() { lsSet(CONFIG.lsPlaylists, state.playlists); }
 
 function loadPersisted() {
-  lsGet(LS_LIKES, []).forEach(k => state.liked.add(k));
-  const p = lsGet(LS_PLAYS, { plays: {}, lastPlayed: {} });
+  lsGet(CONFIG.lsLikes, []).forEach(k => state.liked.add(k));
+  const p = lsGet(CONFIG.lsPlays, { plays: {}, lastPlayed: {} });
   state.plays = p.plays || {};
   state.lastPlayed = p.lastPlayed || {};
-  state.playlists = lsGet(LS_PLAYLISTS, []) || [];
-  // sanitise
-  state.playlists = state.playlists
-    .filter(p => p && typeof p === "object" && p.id && p.name)
-    .map(p => ({
-      id: p.id,
-      name: String(p.name).slice(0, 80),
-      description: String(p.description || "").slice(0, 140),
-      files: Array.isArray(p.files) ? p.files.filter(f => typeof f === "string") : [],
-      createdAt: p.createdAt || Date.now()
-    }));
-  state.offlineSaved = !!localStorage.getItem(LS_OFFLINE);
+  const rawPls = lsGet(CONFIG.lsPlaylists, []);
+  state.playlists = Array.isArray(rawPls)
+    ? rawPls.filter(p => p && typeof p === "object" && p.id && p.name).map(p => ({
+        id: String(p.id),
+        name: String(p.name).slice(0, 80),
+        description: String(p.description || "").slice(0, 140),
+        files: Array.isArray(p.files) ? p.files.filter(f => typeof f === "string") : [],
+        createdAt: p.createdAt || Date.now()
+      }))
+    : [];
+  state.offlineSaved = !!localStorage.getItem(CONFIG.lsOffline);
 }
 
 /* ============================================================
-   6. LOADING SONGS  (GitHub Pages friendly)
+   6. LOADING SONGS
    ============================================================
-   GitHub Pages does NOT provide directory listings, so a
-   manifest is required. Create:
-
-       db/song/songs.json
-
-   Either an array of strings (file names) …
-       ["song-one.mp3", "song-two.mp3"]
-
-   … or an array of objects:
-       [{ "title": "Song One", "artist": "Someone",
-          "album": "Album", "file": "song-one.mp3" }]
+   GitHub Pages has no directory listing → the manifest is
+   REQUIRED. We try the manifest first. If it's missing, we
+   surface a clear error rather than silently failing.
    ============================================================ */
 async function loadSongs() {
-  // (a) Manifest — the primary + GitHub Pages path
+  state.manifestFound = false;
+  state.loadError = null;
+
+  /* --- 1. Manifest (required for GitHub Pages) --- */
   try {
-    const res = await fetch(MANIFEST_URL, { cache: "no-store" });
+    const bust = MANIFEST_URL + "?v=" + Date.now();
+    const res = await fetch(bust, { cache: "no-store" });
+
     if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length) {
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch (e) {
+        state.loadError = "manifest-parse";
+        return [];
+      }
+
+      if (Array.isArray(data)) {
+        state.manifestFound = true;
+        if (!data.length) return [];
         return data.map(normalizeSong).filter(Boolean);
       }
-      // manifest exists but is empty → genuinely no songs
-      if (Array.isArray(data)) return [];
+      state.loadError = "manifest-shape";
+      return [];
+    } else if (res.status === 404) {
+      state.loadError = "manifest-missing";
+    } else {
+      state.loadError = "manifest-http-" + res.status;
     }
-  } catch (e) { /* not present / offline first run */ }
+  } catch (e) {
+    state.loadError = "manifest-network";
+  }
 
-  // (b) Directory listing — works on simple local servers only
+  /* --- 2. Directory listing (works only on local servers) --- */
   try {
-    const res = await fetch(SONG_DIR, { cache: "no-store" });
+    const res = await fetch(SONG_DIR + "?v=" + Date.now(), { cache: "no-store" });
     if (res.ok) {
-      const type = res.headers.get("content-type") || "";
-      if (type.includes("text/html")) {
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("text/html")) {
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, "text/html");
         const files = [...doc.querySelectorAll("a")]
@@ -978,26 +1033,43 @@ async function loadSongs() {
           .filter(h => h && /\.(mp3|m4a|ogg|wav|flac|aac)$/i.test(h))
           .map(h => decodeURIComponent(h.split("/").pop().split("?")[0]));
         if (files.length) {
-          return files.map(f => ({ title: prettifyName(f), artist: "Unknown Artist", file: f }));
+          state.manifestFound = true;
+          return files.map(f => {
+            const info = parseArtistTitle(f);
+            return {
+              title: info.title,
+              artist: info.artist,
+              album: "",
+              file: f,
+              duration: null
+            };
+          });
         }
       }
     }
   } catch (e) { /* ignore */ }
 
-  // (c) Nothing found — empty library, no fake songs.
   return [];
 }
 
 function normalizeSong(raw) {
   if (typeof raw === "string") {
-    return { title: prettifyName(raw), artist: "Unknown Artist", album: "", file: raw, duration: null };
+    const info = parseArtistTitle(raw);
+    return {
+      title: info.title,
+      artist: info.artist,
+      album: "",
+      file: raw,
+      duration: null
+    };
   }
   if (!raw || typeof raw !== "object") return null;
   const file = raw.file || raw.src || raw.url || "";
   if (!file) return null;
+  const info = parseArtistTitle(file);
   return {
-    title: raw.title || prettifyName(file),
-    artist: raw.artist || raw.author || "Unknown Artist",
+    title: raw.title || info.title,
+    artist: raw.artist || raw.author || info.artist,
     album: raw.album || "",
     file,
     duration: typeof raw.duration === "number" ? raw.duration : null
@@ -1044,11 +1116,9 @@ function updateDurationUI(song) {
 }
 
 /* ============================================================
-   7. USER PLAYLISTS  (create / delete / edit)
+   7. USER PLAYLISTS (create / delete / edit — start empty)
    ============================================================ */
-function getPlaylist(id) {
-  return state.playlists.find(p => p.id === id) || null;
-}
+const getPlaylist = id => state.playlists.find(p => p.id === id) || null;
 
 function createPlaylist(name, description = "") {
   const pl = {
@@ -1096,7 +1166,6 @@ function removeSongFromPlaylist(id, song) {
   return true;
 }
 
-/** Resolve a playlist's stored file names to real library songs */
 function resolvePlaylist(pl) {
   if (!pl) return [];
   const byFile = new Map();
@@ -1117,21 +1186,11 @@ function resolvePlaylist(pl) {
 /* ============================================================
    8. THE ALGORITHM
    ============================================================
-   A light-weight recommender built purely from local signals:
-
-     • play count        – how often you actually listened
-     • liked             – explicit positive signal (heaviest)
-     • artist affinity   – sums the above per artist
-     • recency           – decays over 14 days
-     • deterministic
-       jitter            – stable tie-break so mixes don't
-                           reshuffle on every render
-
-   From that we build several mixes. Nothing leaves the
-   browser; the "algorithm" is entirely local.
+   Local-only recommender driven by:
+     • play counts       • liked songs
+     • artist affinity   • recency (14-day decay)
+     • deterministic jitter for stable ordering
    ============================================================ */
-const RECENCY_WINDOW = 1000 * 60 * 60 * 24 * 14; // 14 days
-
 function recordPlay(song) {
   if (!song) return;
   const f = fileKey(song);
@@ -1145,7 +1204,6 @@ function buildScoredSongs() {
   const songs = state.songs;
   const now = Date.now();
 
-  // 1. Artist affinity
   const affinity = {};
   songs.forEach(s => {
     const plays = state.plays[fileKey(s)] || 0;
@@ -1153,24 +1211,23 @@ function buildScoredSongs() {
     affinity[s.artist] = (affinity[s.artist] || 0) + plays * 2 + liked * 3;
   });
 
-  // 2. Score every song
   return songs.map(s => {
     const f = fileKey(s);
     const plays = state.plays[f] || 0;
     const liked = state.liked.has(songKey(s)) ? 1 : 0;
     const aff = affinity[s.artist] || 0;
     const ts = state.lastPlayed[f];
-    const recency = ts ? Math.max(0, 1 - (now - ts) / RECENCY_WINDOW) : 0;
+    const recency = ts ? Math.max(0, 1 - (now - ts) / CONFIG.recencyWindow) : 0;
     const jitter = (hashStr(f) % 1000) / 1000;
 
     const score =
-      plays * 3 +          // repeated listens
-      liked * 6 +          // explicit like
-      aff * 0.4 +          // artist you like
-      recency * 4 +        // recently played
-      jitter * 0.6;        // stable tie-break
+      plays * 3 +
+      liked * 6 +
+      aff * 0.4 +
+      recency * 4 +
+      jitter * 0.6;
 
-    return { song: s, score, plays, liked };
+    return { song: s, score };
   }).sort((a, b) => b.score - a.score);
 }
 
@@ -1186,7 +1243,6 @@ function generateMixes() {
   const scored = buildScoredSongs();
   const hasHistory = hasTasteProfile();
 
-  // ---- Mix 1: On Repeat (needs real repeat listens) ----
   const onRepeat = songs
     .filter(s => (state.plays[fileKey(s)] || 0) >= 2)
     .sort((a, b) => (state.plays[fileKey(b)] || 0) - (state.plays[fileKey(a)] || 0))
@@ -1200,7 +1256,6 @@ function generateMixes() {
     });
   }
 
-  // ---- Mix 2: Made For You ----
   const madeForYou = scored.slice(0, Math.min(20, Math.max(8, songs.length))).map(x => x.song);
   if (madeForYou.length >= 3) {
     mixes.push({
@@ -1208,12 +1263,11 @@ function generateMixes() {
       name: hasHistory ? "Made For You" : "Shuffle Mix",
       description: hasHistory
         ? "Built from what you listen to and like"
-        : "A starting point — play a few songs and this adapts",
+        : "Play a few songs and this adapts to you",
       list: madeForYou
     });
   }
 
-  // ---- Mix 3: Discover (only meaningful once you have history) ----
   if (hasHistory) {
     const discover = songs
       .filter(s => !state.plays[fileKey(s)])
@@ -1229,7 +1283,6 @@ function generateMixes() {
     }
   }
 
-  // ---- Mix 4: Artist mix from your top artist ----
   if (hasHistory) {
     const affinity = {};
     songs.forEach(s => {
@@ -1254,7 +1307,6 @@ function generateMixes() {
   return mixes;
 }
 
-/** "Radio" — start from one song and continue with similar ones */
 function buildRadio(song) {
   if (!song) return [];
   const seedHash = hashStr(song.artist);
@@ -1264,7 +1316,6 @@ function buildRadio(song) {
       let sim = 0;
       if (s.artist === song.artist) sim += 10;
       if (s.album && s.album === song.album) sim += 5;
-      // crude title/artist letter overlap
       sim += (hashStr(s.artist) % 7 === seedHash % 7) ? 2 : 0;
       sim += (hashStr(fileKey(s)) % 11 === hashStr(fileKey(song)) % 11) ? 1 : 0;
       sim += Math.random();
@@ -1276,7 +1327,7 @@ function buildRadio(song) {
 }
 
 /* ============================================================
-   9. PLAYBACK ENGINE
+   9. PLAYBACK
    ============================================================ */
 const currentSong = () =>
   state.order.length && state.pos >= 0 && state.pos < state.order.length
@@ -1328,7 +1379,7 @@ function loadCurrent(autoplay) {
       setPlaying(false);
       const off = !navigator.onLine;
       toast(off
-        ? 'Offline — "' + song.title + '" is not saved. Tap the cloud button to make it available offline.'
+        ? 'Offline — "' + song.title + '" is not saved. Tap the cloud button to save for offline.'
         : 'Could not play "' + song.title + '". Check that the file exists in db/song/.');
     });
   }
@@ -1354,13 +1405,11 @@ function togglePlay() {
 
 function next(auto) {
   if (!state.order.length) return;
-
   if (auto && state.repeat === "one") {
     audio.currentTime = 0;
     audio.play().catch(() => {});
     return;
   }
-
   if (state.pos < state.order.length - 1) {
     state.pos++;
   } else if (state.repeat === "all") {
@@ -1459,7 +1508,6 @@ function updateVolumeUI() {
 
 function makeBarDraggable(barEl, onRatio, onCommit) {
   let dragging = false;
-
   const ratioFromEvent = e => {
     const r = barEl.getBoundingClientRect();
     return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
@@ -1472,7 +1520,6 @@ function makeBarDraggable(barEl, onRatio, onCommit) {
     document.removeEventListener("pointerup", up);
     if (onCommit) onCommit(ratioFromEvent(e));
   };
-
   barEl.addEventListener("pointerdown", e => {
     e.preventDefault();
     dragging = true;
@@ -1500,12 +1547,12 @@ function downloadSong(song) {
 }
 
 /* ============================================================
-   12. OFFLINE  (Cache API + service worker)
+   12. OFFLINE
    ============================================================ */
 async function cacheStatus() {
   if (!("caches" in window) || !state.songs.length) return { saved: 0, total: 0 };
   try {
-    const cache = await caches.open(MEDIA_CACHE);
+    const cache = await caches.open(CONFIG.mediaCache);
     let saved = 0;
     for (const s of state.songs) {
       const hit = await cache.match(songUrl(s));
@@ -1526,8 +1573,13 @@ async function saveAllOffline() {
   updateOfflineButton();
 
   let cache;
-  try { cache = await caches.open(MEDIA_CACHE); }
-  catch (e) { state.savingOffline = false; updateOfflineButton(); toast("Could not open the offline cache."); return; }
+  try { cache = await caches.open(CONFIG.mediaCache); }
+  catch (e) {
+    state.savingOffline = false;
+    updateOfflineButton();
+    toast("Could not open the offline cache.");
+    return;
+  }
 
   const songs = state.songs;
   let done = 0, failed = 0;
@@ -1544,7 +1596,7 @@ async function saveAllOffline() {
     } catch (e) { failed++; }
     done++;
     if (done % 2 === 0 || done === songs.length) {
-      toast(`Saving for offline… ${done}/${songs.length}`, 1400);
+      toast(`Saving for offline… ${done}/${songs.length}`, 1200);
     }
   }
 
@@ -1553,27 +1605,27 @@ async function saveAllOffline() {
   if (failed === songs.length) {
     toast("Could not save anything. Are the files reachable?");
   } else {
-    localStorage.setItem(LS_OFFLINE, String(Date.now()));
+    localStorage.setItem(CONFIG.lsOffline, String(Date.now()));
     state.offlineSaved = true;
     toast(failed
       ? `Saved ${songs.length - failed} of ${songs.length} songs for offline use.`
       : `All ${songs.length} songs are now available offline.`);
   }
   updateOfflineButton();
-  renderOfflineBar();
+  renderStatusBar();
 }
 
 async function clearOfflineCache() {
   try {
-    await caches.delete(MEDIA_CACHE);
-    localStorage.removeItem(LS_OFFLINE);
+    await caches.delete(CONFIG.mediaCache);
+    localStorage.removeItem(CONFIG.lsOffline);
     state.offlineSaved = false;
     toast("Offline copies removed.");
   } catch (e) {
     toast("Could not clear the offline cache.");
   }
   updateOfflineButton();
-  renderOfflineBar();
+  renderStatusBar();
 }
 
 function updateOfflineButton() {
@@ -1581,7 +1633,7 @@ function updateOfflineButton() {
   if (!btn) return;
   if (state.savingOffline) {
     btn.classList.add("on");
-    btn.innerHTML = '<svg class="spin" viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg>';
+    btn.innerHTML = ICON.spin;
     btn.title = "Saving…";
   } else if (state.offlineSaved) {
     btn.classList.add("on");
@@ -1594,46 +1646,132 @@ function updateOfflineButton() {
   }
 }
 
-function renderOfflineBar() {
-  const bar = $("#offlineBar");
+/* ============================================================
+   13. STATUS BAR  (helpful diagnostics on GH Pages)
+   ============================================================ */
+function renderStatusBar() {
+  const bar = $("#statusBar");
   if (!bar) return;
+  const isGH = location.hostname.endsWith("github.io");
+  const msgs = [];
 
   if (!navigator.onLine) {
-    bar.innerHTML = `
-      <div class="offline-bar">
-        ${ICON.info}
-        <span>You're offline. ${state.offlineSaved ? "Saved songs will play normally." : "Only the app shell is cached."}</span>
-      </div>`;
-    return;
+    msgs.push({
+      cls: "info",
+      icon: ICON.info,
+      text: state.offlineSaved
+        ? "You're offline. Saved songs will play normally."
+        : "You're offline. Only the app shell is cached."
+    });
   }
-  if (state.offlineSaved) {
-    bar.innerHTML = `
-      <div class="offline-bar">
-        ${ICON.check}
-        <span>All songs are stored on this device — SpotOn will work without a connection.</span>
-      </div>`;
-    return;
+
+  if (state.loadError === "manifest-missing") {
+    msgs.push({
+      cls: "warn",
+      icon: ICON.warn,
+      text: `Manifest not found at ${MANIFEST_URL}. ` +
+        (isGH
+          ? "GitHub Pages can't list files, so songs.json is required."
+          : "Create this file to load your songs.")
+    });
+  } else if (state.loadError && state.loadError.startsWith("manifest-parse")) {
+    msgs.push({
+      cls: "warn",
+      icon: ICON.warn,
+      text: `${MANIFEST_URL} isn't valid JSON. Check the syntax.`
+    });
+  } else if (state.loadError && state.loadError.startsWith("manifest-shape")) {
+    msgs.push({
+      cls: "warn",
+      icon: ICON.warn,
+      text: `${MANIFEST_URL} must be a JSON array of filenames or objects.`
+    });
+  } else if (state.loadError && state.loadError.startsWith("manifest-http")) {
+    msgs.push({
+      cls: "warn",
+      icon: ICON.warn,
+      text: `Could not load ${MANIFEST_URL} (${state.loadError}).`
+    });
+  } else if (!state.songs.length && state.manifestFound) {
+    msgs.push({
+      cls: "info",
+      icon: ICON.info,
+      text: `${MANIFEST_URL} exists but lists no songs. Add some filenames.`
+    });
+  } else if (state.offlineSaved && navigator.onLine) {
+    msgs.push({
+      cls: "ok",
+      icon: ICON.check,
+      text: "All songs are stored on this device — SpotOn will work without a connection."
+    });
   }
-  bar.innerHTML = "";
+
+  bar.innerHTML = msgs.map(m => `
+    <div class="status-bar ${m.cls}">
+      ${m.icon}
+      <span>${m.text}</span>
+      <span class="spacer"></span>
+    </div>`).join("");
 }
 
 /* ============================================================
-   13. RENDERING
+   14. RENDERING
    ============================================================ */
 const content = $("#content");
 
 function emptyLibraryHTML() {
+  const isGH = location.hostname.endsWith("github.io");
+  const noManifest = state.loadError === "manifest-missing";
+  const badJSON = state.loadError === "manifest-parse";
+  const badShape = state.loadError === "manifest-shape";
+  const emptyManifest = state.manifestFound && !state.songs.length && !state.loadError;
+
+  let body = "";
+
+  if (noManifest) {
+    body = `
+      <p><b>Missing manifest.</b> ${isGH ? "GitHub Pages doesn't list files automatically — you must tell the app what's in your folder." : "Your local server also needs this file."}</p>
+      <div class="hint">
+        <b>Create <code>db/song/songs.json</code></b> and list your filenames:
+        <code>[
+  "Guillermo del Toro - Pacific Rim Theme.mp3",
+  "Pharrell Williams - Happy.mp3",
+  "Three Days Grace - Gone Forever.mp3",
+  "Three Days Grace - Time Of Dying.mp3"
+]</code>
+        Names must match the files in <code>db/song/</code> exactly — including spaces and capital letters.
+      </div>`;
+  } else if (badJSON) {
+    body = `
+      <p><b>Invalid JSON.</b> The file <code>${MANIFEST_URL}</code> couldn't be parsed.</p>
+      <div class="hint">
+        Make sure it's an array, with commas between items and no trailing comma. Example:
+        <code>["Song One.mp3", "Song Two.mp3"]</code>
+      </div>`;
+  } else if (badShape) {
+    body = `
+      <p><b>Unexpected format.</b> The file <code>${MANIFEST_URL}</code> must contain a JSON array.</p>
+      <div class="hint">
+        Either an array of filenames:
+        <code>["Song One.mp3", "Song Two.mp3"]</code>
+        Or an array of objects:
+        <code>[{"file":"Song One.mp3","title":"Song One","artist":"Someone"}]</code>
+      </div>`;
+  } else if (emptyManifest) {
+    body = `
+      <p>The manifest <code>${MANIFEST_URL}</code> exists but contains no songs.</p>
+      <div class="hint">
+        Open it and add your filenames, then refresh.
+      </div>`;
+  } else {
+    body = `
+      <p>No songs were found. Add audio files to <code>db/song/</code> and list them in <code>${MANIFEST_URL}</code>.</p>`;
+  }
+
   return `
     <div class="empty">
       <h3>No songs found</h3>
-      <p>SpotOn reads your library from <code>db/song/</code>.</p>
-      <div class="hint">
-        <b>1.</b> Put your audio files in <code>db/song/</code><br>
-        <b>2.</b> Create <code>db/song/songs.json</code> listing them:<br>
-        <code style="display:block;margin:8px 0 8px 14px;padding:10px 12px;background:#111;border-radius:6px;color:#9fe8b6;">["song-one.mp3", "song-two.mp3"]</code>
-        <b>3.</b> Commit &amp; push — GitHub Pages has no directory listing,<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;so the manifest is what makes this work.
-      </div>
+      ${body}
     </div>`;
 }
 
@@ -1671,7 +1809,6 @@ function listHTML(list, { head = true, empty = emptyLibraryHTML() } = {}) {
     <div class="songlist">${list.map(rowHTML).join("")}</div>`;
 }
 
-/* ---------- Cards ---------- */
 function userPlaylistCardHTML(pl) {
   const list = resolvePlaylist(pl);
   const seed = list[0] || { title: pl.name, artist: pl.name };
@@ -1709,6 +1846,7 @@ function createPlaylistCardHTML() {
 function renderHome() {
   state.view = "home";
   state.currentPlaylistId = null;
+  state.currentMixId = null;
   state.currentList = state.songs;
 
   const hour = new Date().getHours();
@@ -1754,7 +1892,7 @@ function renderHome() {
     <section class="section">
       <div class="section-head">
         <h2>Made for you</h2>
-        <span class="see-all" style="cursor:default">${Object.keys(state.plays).length ? "Based on your listening" : "Play more to tune this"}</span>
+        <span class="see-all" style="cursor:default">${hasTasteProfile() ? "Based on your listening" : "Play more to tune this"}</span>
       </div>
       <div class="cards">
         ${mixes.map(mixCardHTML).join("")}
@@ -1779,6 +1917,7 @@ function renderPlaylist(id) {
   const list = resolvePlaylist(pl);
   state.view = "playlist";
   state.currentPlaylistId = pl.id;
+  state.currentMixId = null;
   state.currentList = list;
 
   content.innerHTML = `
@@ -1813,6 +1952,7 @@ function renderMix(id) {
 
   state.view = "mix";
   state.currentPlaylistId = null;
+  state.currentMixId = mix.id;
   state.currentList = mix.list;
 
   content.innerHTML = `
@@ -1833,6 +1973,7 @@ function renderMix(id) {
 function renderSearchView() {
   state.view = "search";
   state.currentPlaylistId = null;
+  state.currentMixId = null;
   state.currentList = state.songs;
 
   if (!state.songs.length) {
@@ -1856,6 +1997,7 @@ function renderSearchView() {
 function renderResults(query) {
   state.view = "search";
   state.currentPlaylistId = null;
+  state.currentMixId = null;
 
   const q = query.trim().toLowerCase();
   const results = state.songs.filter(s =>
@@ -1881,6 +2023,7 @@ function renderResults(query) {
 function renderLiked() {
   state.view = "liked";
   state.currentPlaylistId = null;
+  state.currentMixId = null;
   const list = state.songs.filter(s => state.liked.has(songKey(s)));
   state.currentList = list;
 
@@ -1904,6 +2047,7 @@ function renderLiked() {
 function renderAllSongs() {
   state.view = "all";
   state.currentPlaylistId = null;
+  state.currentMixId = null;
   state.currentList = state.songs;
 
   content.innerHTML = `
@@ -1913,7 +2057,6 @@ function renderAllSongs() {
   renderHighlight();
 }
 
-/* ---------- Sidebar library ---------- */
 function renderLibrary() {
   const wrap = $("#libList");
   const likedCount = state.liked.size;
@@ -1960,7 +2103,7 @@ function renderLibrary() {
 }
 
 /* ============================================================
-   14. POPUP MENU
+   15. POPUP
    ============================================================ */
 let popupEl = null;
 
@@ -2052,7 +2195,7 @@ function songMenuHTML(song) {
 }
 
 /* ============================================================
-   15. MODAL — create playlist
+   16. MODALS
    ============================================================ */
 function openCreatePlaylistModal() {
   const back = document.createElement("div");
@@ -2103,9 +2246,6 @@ function openCreatePlaylistModal() {
   });
 }
 
-/* ============================================================
-   16. ADD-SONGS MODAL
-   ============================================================ */
 function openAddSongsModal(playlistId) {
   const pl = getPlaylist(playlistId);
   if (!pl) return;
@@ -2151,7 +2291,6 @@ function openAddSongsModal(playlistId) {
     if (!btn) return;
     if (btn.dataset.modal === "cancel") { close(); return; }
 
-    // Save
     const checks = $$("input[data-song]", back);
     const newFiles = [];
     checks.forEach(c => {
@@ -2212,11 +2351,11 @@ function updateMediaSession() {
 }
 
 /* ============================================================
-   19. VIEW HISTORY
+   19. HISTORY
    ============================================================ */
 function currentViewKey() {
   if (state.view === "playlist") return "playlist:" + state.currentPlaylistId;
-  if (state.view === "mix") return "mix:" + (state.currentMixId || "");
+  if (state.view === "mix") return "mix:" + state.currentMixId;
   return state.view;
 }
 
@@ -2230,7 +2369,7 @@ function pushHistory(key) {
 function restoreView(key) {
   if (!key) return;
   if (key.startsWith("playlist:")) renderPlaylist(key.slice(9));
-  else if (key.startsWith("mix:")) { state.currentMixId = key.slice(4); renderMix(state.currentMixId); }
+  else if (key.startsWith("mix:")) renderMix(key.slice(4));
   else if (key === "home") renderHome();
   else if (key === "search") renderSearchView();
   else if (key === "liked") renderLiked();
@@ -2247,7 +2386,7 @@ function goHistory(delta) {
 }
 
 /* ============================================================
-   20. EVENT WIRING — audio
+   20. AUDIO EVENTS
    ============================================================ */
 audio.addEventListener("play",  () => setPlaying(true));
 audio.addEventListener("pause", () => setPlaying(false));
@@ -2273,7 +2412,7 @@ audio.addEventListener("error", () => {
 });
 
 /* ============================================================
-   21. EVENT WIRING — controls
+   21. CONTROL EVENTS
    ============================================================ */
 $("#playBtn").addEventListener("click", togglePlay);
 $("#nextBtn").addEventListener("click", () => next(false));
@@ -2282,7 +2421,6 @@ $("#prevBtn").addEventListener("click", prev);
 $("#shuffleBtn").addEventListener("click", () => {
   state.shuffle = !state.shuffle;
   $("#shuffleBtn").classList.toggle("on", state.shuffle);
-
   const song = currentSong();
   if (song && state.queue.length) {
     const idx = state.queue.indexOf(song);
@@ -2340,7 +2478,6 @@ makeBarDraggable(
 $("#npLike").addEventListener("click", () => toggleLike(currentSong()));
 $("#npDownload").addEventListener("click", () => downloadSong(currentSong()));
 
-/* --- offline button --- */
 $("#offlineBtn").addEventListener("click", async () => {
   if (state.savingOffline) return;
   if (state.offlineSaved) {
@@ -2352,10 +2489,8 @@ $("#offlineBtn").addEventListener("click", async () => {
   }
 });
 
-/* --- create playlist --- */
 $("#newPlaylistBtn").addEventListener("click", openCreatePlaylistModal);
 
-/* --- delete playlist --- */
 $("#deletePlaylistBtn").addEventListener("click", e => {
   e.stopPropagation();
   if (!state.playlists.length) { toast("No playlists to delete."); return; }
@@ -2383,7 +2518,6 @@ $("#deletePlaylistBtn").addEventListener("click", e => {
   });
 });
 
-/* --- sidebar nav --- */
 $$(".nav-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     $$(".nav-btn").forEach(b => b.classList.remove("active"));
@@ -2396,7 +2530,6 @@ $$(".nav-btn").forEach(btn => {
   });
 });
 
-/* --- sidebar library --- */
 $("#libList").addEventListener("click", e => {
   const item = e.target.closest("[data-lib],[data-playlist]");
   if (!item) return;
@@ -2409,10 +2542,8 @@ $("#libList").addEventListener("click", e => {
   pushHistory(currentViewKey());
 });
 
-/* --- main content --- */
 content.addEventListener("click", e => {
 
-  /* like */
   const likeBtn = e.target.closest("[data-like]");
   if (likeBtn) {
     e.stopPropagation();
@@ -2420,7 +2551,6 @@ content.addEventListener("click", e => {
     return;
   }
 
-  /* more (⋯) */
   const moreBtn = e.target.closest("[data-more]");
   if (moreBtn) {
     e.stopPropagation();
@@ -2447,18 +2577,14 @@ content.addEventListener("click", e => {
         renderLibrary();
         if (state.view === "playlist" && state.currentPlaylistId === val) renderPlaylist(val);
       }
-      else if (act === "newpl") {
-        openCreatePlaylistModal();
-      }
+      else if (act === "newpl") openCreatePlaylistModal();
     });
     return;
   }
 
-  /* create playlist card / see-all */
   const createEl = e.target.closest("[data-createpl]");
   if (createEl) { e.stopPropagation(); openCreatePlaylistModal(); return; }
 
-  /* add songs to a playlist */
   const addSongs = e.target.closest("[data-addsongs]");
   if (addSongs) {
     e.stopPropagation();
@@ -2466,7 +2592,6 @@ content.addEventListener("click", e => {
     return;
   }
 
-  /* delete playlist (inline button) */
   const delPl = e.target.closest("[data-deletepl]");
   if (delPl) {
     e.stopPropagation();
@@ -2482,7 +2607,6 @@ content.addEventListener("click", e => {
     return;
   }
 
-  /* play a playlist */
   const plPlay = e.target.closest("[data-playlistplay]");
   if (plPlay) {
     e.stopPropagation();
@@ -2493,7 +2617,6 @@ content.addEventListener("click", e => {
     return;
   }
 
-  /* play a mix */
   const mixPlay = e.target.closest("[data-mixplay]");
   if (mixPlay) {
     e.stopPropagation();
@@ -2502,7 +2625,6 @@ content.addEventListener("click", e => {
     return;
   }
 
-  /* play playlist from header */
   const plHeaderPlay = e.target.closest("[data-playplaylist]");
   if (plHeaderPlay) {
     e.stopPropagation();
@@ -2511,7 +2633,6 @@ content.addEventListener("click", e => {
     return;
   }
 
-  /* play mix from header */
   const mixHeaderPlay = e.target.closest("[data-playmix]");
   if (mixHeaderPlay) {
     e.stopPropagation();
@@ -2520,7 +2641,6 @@ content.addEventListener("click", e => {
     return;
   }
 
-  /* open playlist card */
   const plCard = e.target.closest("[data-playlist]");
   if (plCard) {
     renderPlaylist(plCard.dataset.playlist);
@@ -2529,24 +2649,20 @@ content.addEventListener("click", e => {
     return;
   }
 
-  /* open mix card */
   const mixCard = e.target.closest("[data-mix]");
   if (mixCard) {
-    state.currentMixId = mixCard.dataset.mix;
-    renderMix(state.currentMixId);
+    renderMix(mixCard.dataset.mix);
     renderLibrary();
     pushHistory(currentViewKey());
     return;
   }
 
-  /* play all */
   const playAll = e.target.closest("[data-playall]");
   if (playAll) {
     if (state.songs.length) playList(state.songs, 0);
     return;
   }
 
-  /* song row */
   const row = e.target.closest(".song");
   if (row) {
     const i = Number(row.dataset.idx);
@@ -2558,7 +2674,6 @@ content.addEventListener("click", e => {
   }
 });
 
-/* --- search --- */
 const searchInput = $("#search");
 let searchTimer = null;
 
@@ -2587,11 +2702,9 @@ searchInput.addEventListener("keydown", e => {
   }
 });
 
-/* --- back / forward --- */
 $("#backBtn").addEventListener("click", () => goHistory(-1));
 $("#fwdBtn").addEventListener("click",  () => goHistory(1));
 
-/* --- keyboard --- */
 document.addEventListener("keydown", e => {
   const tag = (e.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea") return;
@@ -2627,25 +2740,20 @@ document.addEventListener("keydown", e => {
   }
 });
 
-/* ============================================================
-   22. ONLINE / OFFLINE EVENTS
-   ============================================================ */
-window.addEventListener("online",  () => { renderOfflineBar(); toast("Back online"); });
-window.addEventListener("offline", () => { renderOfflineBar(); toast("You're offline"); });
+window.addEventListener("online",  () => { renderStatusBar(); toast("Back online"); });
+window.addEventListener("offline", () => { renderStatusBar(); toast("You're offline"); });
 
 /* ============================================================
-   23. SERVICE WORKER
+   22. SERVICE WORKER (optional — app-shell caching)
    ============================================================ */
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => {
-      /* sw.js not present — app still works, just no app-shell caching */
-    });
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
   });
 }
 
 /* ============================================================
-   24. INIT
+   23. INIT
    ============================================================ */
 async function init() {
   loadPersisted();
@@ -2655,12 +2763,12 @@ async function init() {
 
   renderHome();
   renderLibrary();
+  renderStatusBar();
   updateVolumeUI();
   updatePlayIcon();
   updateNowPlaying();
   updateProgress();
   updateOfflineButton();
-  renderOfflineBar();
 
   state.history = ["home"];
   state.historyIndex = 0;
@@ -2668,18 +2776,23 @@ async function init() {
   prefetchDurations();
 
   if (!state.songs.length) {
-    toast("No songs found — add files to db/song/ and create songs.json");
+    if (state.loadError === "manifest-missing") {
+      toast("Missing db/song/songs.json — see the message on the page.", 5000);
+    } else if (state.loadError) {
+      toast("Could not load your library — see the message on the page.", 5000);
+    } else {
+      toast("No songs found — add files to db/song/.", 4000);
+    }
   }
 
-  // Refresh offline state once we know the library
   setTimeout(async () => {
     if (!state.offlineSaved) return;
     const { saved, total } = await cacheStatus();
     if (total && saved < total) {
       state.offlineSaved = false;
-      localStorage.removeItem(LS_OFFLINE);
+      localStorage.removeItem(CONFIG.lsOffline);
       updateOfflineButton();
-      renderOfflineBar();
+      renderStatusBar();
     }
   }, 1500);
 }
